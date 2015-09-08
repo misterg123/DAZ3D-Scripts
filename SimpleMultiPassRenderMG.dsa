@@ -1,0 +1,424 @@
+// DAZ Studio version 4.6  filetype DAZ Script
+//=====================================================
+// 2015.9.7 simple multi-pass render script, MisterG
+// modified by MG to do a multi-file read and multi-scene Render from the scripts mentioned below
+// modified from Butaixianran's SimpleMultiPassRender.dsa
+// modified from mCasual/Jacques's mcjListRender.dsa
+
+// MIT License
+//=====================================================
+    var bRenderDone = false;
+    var bAbort = false;
+    var bOkayedOverwrites = false;
+    var bLightStatus;
+    var bLightIntensity;
+    var bLightIllumination;
+    var bRenderSeparate = true;
+    var OFF = 0;
+    var DIFFUSE = 1;
+    var SPECULAR = 2;
+    var ON = 3;
+    
+    var SourceDir;    
+    var outDir;
+    var nPlatform = App.platform();
+    if( nPlatform == App.Windows )
+        outDir = System.getenv("HOMEDRIVE")+System.getenv("HOMEPATH");
+    else if( nPlatform == App.MacOSX )
+        outDir = System.getenv("HOME");
+    
+    var oConfig = loadConfig();
+    if (! oConfig) {
+        oConfig = Object();
+         if( nPlatform == App.Windows )
+            oConfig.outputDirectory = System.getenv("HOMEDRIVE")+System.getenv("HOMEPATH");
+        else if( nPlatform == App.MacOSX )
+            oConfig.outputDirectory = System.getenv("HOME");
+        
+        oConfig.SourceDirectory = oConfig.outputDirectory; // default source dir same as target
+        oConfig.filePrefix = ""; // PNG
+        oConfig.fileExtension = 1; // PNG
+        oConfig.maximizeLights = true;
+        oConfig.separateLights = true;
+        saveConfig(oConfig);
+    }
+
+    outDir = oConfig.outputDirectory;
+    SourceDir = oConfig.SourceDirectory;
+        
+    var programName         = "simpleMultiPassRenderMG";
+    var versionName         = "v1";
+
+    //set dialog
+    var wDlg = new DzDialog;
+    wDlg.caption = programName + " " + versionName;
+
+    var gb = new DzVGroupBox( wDlg );
+    var gbBrowse = new DzVGroupBox( gb );
+    gbBrowse.columns = 3;
+    var wLblSrc = new DzLabel( gbBrowse );
+    wLblSrc.text = "Source";
+    var wEdSrc = new DzLineEdit( gbBrowse );
+    wEdSrc.text = SourceDir;
+    wEdSrc.readOnly = true
+    var wBrowseBtn = addButtonToGB( gbBrowse, "Browse ...", BrowseInDir );    
+    
+    var wLblDest = new DzLabel( gbBrowse );
+    wLblDest.text = "Destination";
+    var wEdDest = new DzLineEdit( gbBrowse );
+    wEdDest.text = outDir;
+    wEdDest.readOnly = true
+    var wBrowseBtn = addButtonToGB( gbBrowse, "Browse ...", BrowseDir );
+
+    var gbFilePrefix = new DzVGroupBox( gb );
+    gbFilePrefix.columns = 2;
+    var wLblPrefix = new DzLabel( gbFilePrefix );
+    wLblPrefix.text = "File Prefix";
+    var wEdPrefix = new DzLineEdit( gbFilePrefix );
+    wEdPrefix.text = oConfig.filePrefix;
+    wEdPrefix.readOnly = false;
+
+    var gbFiletype = new DzVGroupBox( gb );
+    gbFiletype.columns = 2;
+    var wLblFiSu = new DzLabel( gbFiletype );
+    wLblFiSu.text = "File type / extension";
+    
+    var wCbFiSu = new DzComboBox( gbFiletype );
+    wCbFiSu.insertItem( "bmp" );
+    wCbFiSu.insertItem( "png" );
+    wCbFiSu.insertItem( "jpg" );
+    wCbFiSu.insertItem( "tif" );
+    wCbFiSu.currentItem = oConfig.fileExtension;
+
+    var gbSepLts = new DzVGroupBox( gb );
+    gbSepLts.columns = 2;
+
+    //var wCkSepLts = new DzCheckBox( gbSepLts );
+    //wCkSepLts.text = "Separate passes for\nDiffuse / Specular";
+    //wCkSepLts.checked = oConfig.separateLights;
+
+    //var wCkMaxLts = new DzCheckBox( gbSepLts );
+    //wCkMaxLts.text = "Set Lights to\n100% Intensity";
+    //wCkMaxLts.checked = oConfig.maximizeLights;
+
+    //var wRenderListBtn = addButtonToGB( gb, "Multi-pass Render", RenderAll ); // Multi-pass Render
+    
+	var wRenderListBtn = addButtonToGB( gb, "Multi-Scene Render", MultiRender ); // Multi Scene Render
+    
+    var wCancelBtn = new DzPushButton( gb );
+    wCancelBtn.text = "&Exit";
+    wDlg.setRejectButton( wCancelBtn );
+
+
+
+    var oRenderMgr = App.getRenderMgr();
+
+    var renderSettings = oRenderMgr.getRenderOptions();
+
+    renderSettings.isCurrentFrameRender = true;
+
+    renderSettings.renderImgToId = renderSettings.DirectToFile;
+
+    connect( oRenderMgr, "renderFinished(bool)", renderFinishedsignaled );
+    
+    wDlg.minWidth = 320;
+    wDlg.minHeight = 320;
+    
+    wDlg.exec();
+
+//==================================================================
+//
+//==================================================================
+function MultiRender()
+{
+    bAbort = false;
+    bOkayedOverwrites = true;    
+    var outPic;
+    var sPrefix = "";
+	var aFiles = new Array;
+   	
+   	aFiles = GetFilesInDir(SourceDir); // Read all the files from Source dir 
+
+    oConfig.SourceDirectory = SourceDir;
+    oConfig.outputDirectory = outDir;
+    oConfig.fileExtension = wCbFiSu.currentItem;
+    oConfig.filePrefix =  wEdPrefix.text;
+    saveConfig(oConfig);
+    var sfileNum;
+   
+    sPrefix = wEdPrefix.text;
+    if (sPrefix) 
+        sPrefix = sPrefix + "_";
+    else        
+    	sPrefix = "multi_";
+
+	for (var i = 0; i < aFiles.length; i++)  
+	{
+		// Open file then render file
+		openFile(aFiles[i]);
+		if (i < 10)
+			sfileNum = sPrefix + "0" + i + 1;
+		else 
+			sfileNum = sPrefix + i + 1;
+		outPic = outDir + "/"  + sfileNum + "." + wCbFiSu.currentText;           
+		RenderScene(outPic);
+	}
+
+}
+
+//==================================================================
+// returns Array object of filenames in specified directory
+//==================================================================
+function GetFilesInDir(sDirectory) {
+	 
+	var myDir = new DzDir( sDirectory ); 
+	var aFiles = new Array;
+
+	if ( myDir ) {		 
+		 // get the list of .duf files it holds using 
+		 // the entryList function to look for .duf files (not folders etc.) 
+		 aFiles = myDir.entryList( "*.duf" , DzDir.Files ); 
+	} 
+	for (var i = 0; i < aFiles.length; i++)
+	{
+		aFiles[i] = String("%1/%2").arg(sDirectory).arg(aFiles[i]);
+	}
+	return aFiles;
+}
+
+
+function RenderAll()
+{
+    bAbort = false;
+    bOkayedOverwrites = false;
+    var light_num = Scene.getNumLights();
+    var outPic;
+    var sPrefix = "";
+
+    oConfig.outputDirectory = outDir;
+    oConfig.fileExtension = wCbFiSu.currentItem;
+    oConfig.separateLights = wCkSepLts.checked;
+    oConfig.maximizeLights = wCkMaxLts.checked;
+    oConfig.filePrefix =  wEdPrefix.text;
+    saveConfig(oConfig);
+
+    SaveLights();
+    
+    sPrefix = wEdPrefix.text;
+    if (sPrefix)
+        sPrefix = sPrefix + " ";
+    for (var i=0; i<light_num; i++) {
+        LightsOff();
+        var theLight = Scene.getLight(i);
+        if (wCkSepLts.checked) {
+            SetLight(i, 1, SPECULAR);
+            outPic = outDir + "/" + sPrefix + theLight.getName()+ " Specular." + wCbFiSu.currentText;
+            RenderScene(outPic);
+            SetLight(i, 1, DIFFUSE);
+            outPic = outDir + "/"  + sPrefix + theLight.getName()+ " Diffuse." + wCbFiSu.currentText;
+            RenderScene(outPic);
+        }
+        else {
+            outPic = outDir + "/"  + sPrefix + theLight.getName()+ "." + wCbFiSu.currentText;
+            SetLight(i, 1, ON);
+            RenderScene(outPic);
+        }
+    }
+    LightsOff();
+    outPic = outDir + "/" + sPrefix + "Mask.png"; // Preserve transparency (would also work with TIF)
+    RenderScene(outPic);
+    RestoreLights();
+}
+
+function openFile(sFile) {
+	// Open  file from folder
+	var oContentMgr = App.getContentMgr();
+	oContentMgr.openFile(sFile, false); // false = replace scene, true = merge into scene
+}
+
+function saveConfig(obj) {
+	var sJSONData = JSON.stringify(obj, undefined, "\t");
+	var sScriptFileName = DzFile(getScriptFileName());
+	var sConfigName = sScriptFileName.path()+"/."+sScriptFileName.baseName()+".conf";
+	var fConfigFile = DzFile( sConfigName );
+	fConfigFile.open(DzFile.WriteOnly);
+	fConfigFile.writeLine( sJSONData );
+	fConfigFile.close();
+}
+
+function loadConfig()
+{
+	var sScriptFileName = DzFile(getScriptFileName());
+	var sConfigName = sScriptFileName.path()+"/."+sScriptFileName.baseName()+".conf";
+	var fConfigFile = DzFile( sConfigName );
+	if (! fConfigFile.exists())
+	    return false;
+	fConfigFile.open(DzFile.ReadOnly);
+	var sJSONConfig = fConfigFile.read();
+	fConfigFile.close();
+	var obj = JSON.parse( sJSONConfig );
+	return obj;
+}
+
+function SaveLights()
+{
+    var light_num = Scene.getNumLights();
+    bLightStatus = Array();
+    bLightIntensity = Array();
+    bLightIllumination = Array();
+
+    for(var i=0; i<light_num; i++)
+    {
+        var theLight = Scene.getLight(i);
+        bLightStatus[i] = theLight.isOn();
+        bLightIntensity[i] = theLight.getIntensity();
+        var illuminationControl = theLight.getIlluminationControl();
+        bLightIllumination[i] = illuminationControl.getValue();
+     }
+}
+function RestoreLights()
+{
+    var light_num = Scene.getNumLights();
+    for(var i=0; i<light_num; i++)
+    {
+        Scene.getLight(i).setVisible(bLightStatus[i]);
+	    var intensityControl = theLight.getIntensityControl();
+	    intensityControl.setValue(bLightIntensity[i]);
+        var illuminationControl = theLight.getIlluminationControl();
+        illuminationControl.setValue(bLightIllumination[i]);
+   }
+}
+
+function LightsOff()
+{
+    for (var j=0; j<Scene.getNumLights(); j++)
+    {
+        Scene.getLight(j).setVisible(false);
+    }
+
+}
+
+function SetLight(lightNumber, intensity, illumination)
+{
+    theLight = Scene.getLight(lightNumber);
+    
+    var intensityControl = theLight.getIntensityControl();
+    var intensityMax = intensityControl.getMax();
+    var intensityMin = intensityControl.getMin();
+    if (wCkMaxLts.checked) {
+        if (intensity > intensityMax) {
+            intensityControl.setValue(intensityMax);
+        }
+        else if (intensity > intensityMax) {
+            intensityControl.setValue(intensityMin);
+        }
+        else {
+            intensityControl.setValue(intensity);
+        }
+    }
+	var illuminationControl = theLight.getIlluminationControl();
+    var illuminationMax = illuminationControl.getMax();
+    var illuminationMin = illuminationControl.getMin();
+    if ((illumination > illuminationMin) && (illumination < illuminationMax)) {
+        illuminationControl.setValue(illumination);
+    }
+    theLight.setVisible(true);
+}
+
+//==================================================================
+//
+//==================================================================
+function RenderScene(outPic)
+{
+    var fi = new DzFileInfo( outPic );
+    if( !bOkayedOverwrites )
+    {
+        if( fi.exists() )
+        {
+            if( MessageBox.question( "Do you really want to overwrite the image file\n \"" + outPic + "\" \n and all other images that follow?\nClick Yes to overwrite old images with the new renders, click No to stop.", "TexAnim", "&Yes", "&No" ) == 0 )
+            {
+                bOkayedOverwrites = true;
+            }
+            else
+            {
+                return;
+            }
+        }
+    }
+    if( bOkayedOverwrites )
+    {
+        if( fi.exists() )
+        {
+            fi.remove();
+        }
+    }
+    renderSettings.renderImgFilename = outPic;
+    bRenderDone = false;
+    oRenderMgr.doRender();
+    while(  !bRenderDone )
+    {
+        processEvents();
+    }
+    if( bAbort )
+    {
+        break;
+    }
+}
+
+
+//==================================================================
+// add a button to gb, set its text to text, connect it to func
+//==================================================================
+function addButtonToGB( gb, text, func )
+{
+    var wButton = new DzPushButton( gb );
+    wButton.text = text;
+    connect( wButton, "clicked()", func );
+    return( wButton );
+}
+
+
+//==================================================================
+//
+//==================================================================
+function renderFinishedsignaled( success )
+{
+    bRenderDone = true;
+    if( !success )
+    {
+        bAbort = true;
+    }
+}
+
+//==================================================================
+//
+//==================================================================
+function BrowseInDir()
+{
+    var path = FileDialog.doDirectoryDialog( 
+        "Select a Directory for the scenes to load", 
+        "", 
+        SourceDir );
+    if( path )
+    {
+        SourceDir = path;
+        wEdSrc.text = path;
+    }
+}
+
+//==================================================================
+//
+//==================================================================
+function BrowseDir()
+{
+    var path = FileDialog.doDirectoryDialog( 
+        "Select a Directory for the rendered", 
+        "", 
+        outDir );
+    if( path )
+    {
+        outDir = path;
+        wEdDest.text = path;
+    }
+}
+
